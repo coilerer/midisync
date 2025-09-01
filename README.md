@@ -34,6 +34,8 @@ This document describes the MIDI synchronization runelite plugin (“midisync”
 
 
 ## How synchronization works
+- LLMs wrote most of this, so I had to ask them)...
+
 - Game tick baseline
     - The core loop advances once per game tick (nominally every 600 ms). A monotonic counter is incremented at each tick.
 
