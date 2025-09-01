@@ -1,4 +1,4 @@
-package com.MidiSync;
+package com.midisync;
 
 import net.runelite.client.config.*;
 
