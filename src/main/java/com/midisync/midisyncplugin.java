@@ -9,6 +9,7 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.overlay.OverlayManager;
 
 import javax.inject.Inject;
@@ -25,13 +26,14 @@ import java.util.concurrent.TimeUnit;
 		description = "Plays MIDI tracks synchronized to game ticks",
 		tags = {"music", "midi", "audio"}
 )
-public class MidiSyncPlugin extends Plugin
+public class midisyncplugin extends Plugin
 {
 	@Inject private Client client;
 	@Inject private ConfigManager configManager;
-	@Inject private MidiSyncConfig config;
+	@Inject private midisyncconfig config;
 	@Inject private OverlayManager overlayManager;
-	@Inject private MidiSyncOverlay debugOverlay;
+	@Inject private midisyncoverlay debugOverlay;
+	@Inject private FontManager fontManager;
 
 	private Synthesizer synth;
 	private MidiChannel[] channels;
@@ -47,7 +49,7 @@ public class MidiSyncPlugin extends Plugin
 
 	private List<String> trackNames;
 
-	private MidiSyncOverlay overlay;
+	private midisyncoverlay overlay;
 	private ScheduledExecutorService noteScheduler = Executors.newSingleThreadScheduledExecutor();
 	private final Set<String> availableBankProgram = new HashSet<>();
 
@@ -85,9 +87,9 @@ public class MidiSyncPlugin extends Plugin
 	}
 
 	@Provides
-	MidiSyncConfig provideConfig(ConfigManager configManager)
+	midisyncconfig provideConfig(ConfigManager configManager)
 	{
-		return configManager.getConfig(MidiSyncConfig.class);
+		return configManager.getConfig(midisyncconfig.class);
 	}
 
 	/** Returns the tick subdivision (e.g., 1/4, 1/8, ...). */
@@ -101,60 +103,24 @@ public class MidiSyncPlugin extends Plugin
 	protected void startUp() throws Exception
 	{
 		log.info("Starting Daniel MIDI Sync...");
-		if (!config.MidiSync()) return;
+		if (!config.MidiSync())
+			return;
 
-		try { initSynth(); } catch (Exception e) { log.error("Failed to initialise synthesizer", e); return; }
-
-		File folder = new File(config.midiFolder());
-		if (!folder.exists() || !folder.isDirectory()) return;
-
-		File[] midiFiles = folder.listFiles((dir, name) -> name.toLowerCase().endsWith(".mid"));
-		if (midiFiles == null || midiFiles.length == 0) return;
-
-		Set<Integer> whitelist = parseTrackList(config.trackWhitelist());
-		Set<Integer> blacklist = parseTrackList(config.trackBlacklist());
-
-		Arrays.sort(midiFiles, Comparator.comparingInt(f -> {
-			try { return Integer.parseInt(f.getName().split(" - ")[0]); }
-			catch (NumberFormatException e) { return Integer.MAX_VALUE; }
-		}));
-
-		trackNames = new ArrayList<>();
-		trackNotes = new ArrayList<>();
-		Map<Integer, Integer> trackNumberToIndex = new HashMap<>();
-		double quantization = configQuantizationValue();
-
-		for (File midiFile : midiFiles)
+		try
 		{
-			int trackNumber;
-			try { trackNumber = Integer.parseInt(midiFile.getName().split(" - ")[0]); }
-			catch (NumberFormatException e) { trackNumber = -1; }
-
-			if ((!whitelist.isEmpty() && !whitelist.contains(trackNumber)) ||
-					blacklist.contains(trackNumber)) continue;
-
-			try
-			{
-				List<danielMidiNote> fileNotes = loadMidi(midiFile, config.bpm(), quantization);
-				trackNotes.add(fileNotes);
-				trackNames.add(midiFile.getName());
-				if (trackNumber != -1) trackNumberToIndex.put(trackNumber, trackNotes.size() - 1);
-				log.info("Loaded {} notes from {}", fileNotes.size(), midiFile.getName());
-			}
-			catch (Exception e)
-			{
-				log.warn("Failed to load MIDI {}: {}", midiFile.getName(), e.toString());
-			}
+			initSynth();
+		}
+		catch (Exception e)
+		{
+			log.error("Failed to initialise synthesizer", e);
+			return;
 		}
 
-		int startingTrackNumber = config.startingTrack();
-		Integer startIndex = trackNumberToIndex.getOrDefault(startingTrackNumber, 0);
+		// load all tracks with whitelist/blacklist logic
+		loadTracks();
 
-		currentTrackIndex = startIndex;
-		if (!trackNotes.isEmpty()) notes = trackNotes.get(currentTrackIndex);
-		gameTickCounter = 0.0;
-
-		overlay = new MidiSyncOverlay(client, this, config);
+		// create & add overlay
+		overlay = new midisyncoverlay(client, this, config, fontManager);
 		overlayManager.add(overlay);
 
 		log.info("Overlay added. Synth channels = {}", channels != null ? channels.length : 0);
@@ -163,13 +129,13 @@ public class MidiSyncPlugin extends Plugin
 	@Override
 	protected void shutDown() throws Exception
 	{
-		stopAllNotes();
-		if (notes != null) notes.clear();
-		if (trackNotes != null) trackNotes.clear();
-		if (synth != null) synth.close();
+		resetTracks();
 
-		gameTickCounter = 0;
-		currentTrackIndex = 0;
+		if (synth != null)
+		{
+			synth.close();
+			synth = null;
+		}
 
 		if (overlay != null)
 		{
@@ -177,7 +143,6 @@ public class MidiSyncPlugin extends Plugin
 			overlay = null;
 		}
 
-		noteScheduler.shutdownNow();
 		log.info("Daniel MIDI Sync stopped.");
 	}
 
@@ -218,9 +183,54 @@ public class MidiSyncPlugin extends Plugin
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		if (!event.getGroup().equals("danielPlugin")) return;
-		if (event.getKey().equals("quantizeDivisor")) reQuantizeCurrentTrack();
+		if (!event.getGroup().equals("danielPlugin"))
+			return;
+
+		String key = event.getKey();
+		switch (key)
+		{
+			case "quantizeDivisor":
+				reQuantizeCurrentTrack();
+				break;
+
+			case "useWhitelist":
+			case "trackWhitelist":
+			case "trackBlacklist":
+			{
+				String oldTrackName = (trackNames != null && currentTrackIndex < trackNames.size())
+						? trackNames.get(currentTrackIndex)
+						: null;
+				double oldTick = gameTickCounter;
+
+				resetTracks();
+				loadTracks();
+
+				// Restore previous track and play position if still available
+				if (oldTrackName != null && trackNames != null)
+				{
+					int idx = trackNames.indexOf(oldTrackName);
+					if (idx != -1)
+					{
+						currentTrackIndex = idx;
+						notes = trackNotes.get(idx);
+						gameTickCounter = oldTick;
+						log.info("Restored track after reload: {} at tick {}", oldTrackName, oldTick);
+					}
+				}
+			}
+			break;
+
+			case "addCurrentTrackToWhitelist":
+				addCurrentTrackToWhitelist();
+				// Reset toggle to false
+				configManager.setConfiguration("danielPlugin", "addCurrentTrackToWhitelist", false);
+				break;
+		}
 	}
+
+
+
+
 
 	private void initSynth() throws Exception
 	{
@@ -677,6 +687,153 @@ public class MidiSyncPlugin extends Plugin
 			if (note.getEndTickFraction() > tick) remaining++;
 		return remaining;
 	}
+
+	private void loadTracks()
+	{
+		File folder = new File(config.midiFolder());
+		if (!folder.exists() || !folder.isDirectory()) return;
+
+		File[] midiFiles = folder.listFiles((dir, name) -> name.toLowerCase().endsWith(".mid"));
+		if (midiFiles == null || midiFiles.length == 0) return;
+
+		Set<Integer> whitelist = parseTrackList(config.trackWhitelist());
+		Set<Integer> blacklist = parseTrackList(config.trackBlacklist());
+
+		Arrays.sort(midiFiles, Comparator.comparingInt(f -> {
+			try { return Integer.parseInt(f.getName().split(" - ")[0]); }
+			catch (NumberFormatException e) { return Integer.MAX_VALUE; }
+		}));
+
+		trackNames = new ArrayList<>();
+		trackNotes = new ArrayList<>();
+		Map<Integer, Integer> trackNumberToIndex = new HashMap<>();
+		double quantization = configQuantizationValue();
+
+		for (File midiFile : midiFiles)
+		{
+			int trackNumber;
+			try { trackNumber = Integer.parseInt(midiFile.getName().split(" - ")[0]); }
+			catch (NumberFormatException e) { trackNumber = -1; }
+
+			boolean skip = false;
+
+			// apply whitelist only if enabled
+			if (config.useWhitelist() && !whitelist.isEmpty() && !whitelist.contains(trackNumber))
+				skip = true;
+
+			// blacklist always applies
+			if (blacklist.contains(trackNumber))
+				skip = true;
+
+			if (skip) continue;
+
+			try
+			{
+				List<danielMidiNote> fileNotes = loadMidi(midiFile, config.bpm(), quantization);
+				trackNotes.add(fileNotes);
+				trackNames.add(midiFile.getName());
+				if (trackNumber != -1)
+					trackNumberToIndex.put(trackNumber, trackNotes.size() - 1);
+				log.info("Loaded {} notes from {}", fileNotes.size(), midiFile.getName());
+			}
+			catch (Exception e)
+			{
+				log.warn("Failed to load MIDI {}: {}", midiFile.getName(), e.toString());
+			}
+		}
+
+		int startingTrackNumber = config.startingTrack();
+		Integer startIndex = trackNumberToIndex.getOrDefault(startingTrackNumber, 0);
+
+		currentTrackIndex = startIndex;
+		notes = !trackNotes.isEmpty() ? trackNotes.get(currentTrackIndex) : null;
+		gameTickCounter = 0.0;
+	}
+	private String resetTracks()
+	{
+		stopAllNotes();
+
+		String oldTrackName = (trackNames != null && currentTrackIndex < trackNames.size())
+				? trackNames.get(currentTrackIndex)
+				: null;
+
+		if (notes != null) notes.clear();
+		if (trackNotes != null) trackNotes.clear();
+
+		notes = null;
+		trackNotes = null;
+		trackNames = null;
+		currentTrackIndex = 0;
+		gameTickCounter = 0.0;
+
+		noteScheduler.shutdownNow();
+		noteScheduler = Executors.newSingleThreadScheduledExecutor();
+
+		return oldTrackName;
+	}
+	private void addCurrentTrackToWhitelist()
+	{
+		if (trackNames == null || currentTrackIndex >= trackNames.size())
+			return;
+
+		String currentTrackName = trackNames.get(currentTrackIndex);
+		double currentTick = gameTickCounter; // save play position
+
+		int trackNumber;
+		try {
+			trackNumber = Integer.parseInt(currentTrackName.split(" - ")[0]);
+		} catch (NumberFormatException e) {
+			log.warn("Cannot add track to whitelist, invalid track number: {}", currentTrackName);
+			return;
+		}
+
+		// Parse and update whitelist
+		String oldWhitelist = config.trackWhitelist();
+		Set<Integer> whitelist = parseTrackList(oldWhitelist);
+		if (!whitelist.add(trackNumber)) {
+			log.info("Track {} is already in the whitelist", trackNumber);
+			return;
+		}
+
+		StringBuilder sb = new StringBuilder();
+		for (int n : whitelist)
+			sb.append(n).append(",");
+		if (sb.length() > 0) sb.setLength(sb.length() - 1);
+		configManager.setConfiguration("danielPlugin", "trackWhitelist", sb.toString());
+
+		log.info("Added track {} to whitelist", trackNumber);
+
+		// Reload tracks immediately
+		resetTracks();
+		loadTracks();
+
+		// Restore previous track and its play position if still available
+		if (trackNames != null)
+		{
+			int idx = trackNames.indexOf(currentTrackName);
+			if (idx != -1)
+			{
+				currentTrackIndex = idx;
+				notes = trackNotes.get(idx);
+				gameTickCounter = currentTick; // restore play position
+				log.info("Restored track after whitelist update: {} at tick {}", currentTrackName, currentTick);
+			}
+		}
+	}
+	// Toggle shuffle setting
+	public void toggleShuffle()
+	{
+		configManager.setConfiguration("danielPlugin", "shuffleTracks", !config.shuffleTracks());
+	}
+
+	// Add current track to whitelist (called from overlay)
+	public void addCurrentTrackToWhitelistOverlay()
+	{
+		addCurrentTrackToWhitelist();
+	}
+
+
+
 
 	public double getGameTickCounter() { return gameTickCounter; }
 

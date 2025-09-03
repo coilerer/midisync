@@ -3,7 +3,7 @@ package com.midisync;
 import net.runelite.client.config.*;
 
 @ConfigGroup("MidiSync")
-public interface MidiSyncConfig extends Config
+public interface midisyncconfig extends Config
 {
 	@ConfigSection(
 			name = "MidiSync",
@@ -27,7 +27,7 @@ public interface MidiSyncConfig extends Config
 	@ConfigItem(
 			keyName = "bpm",
 			name = "BPM",
-			description = "Set playback speed in BPM (try 50 or 200 if you don't like 100BPM)",
+			description = "Set playback speed (e.g. 50 or 100 BPM)",
 			section = "MidiSync",
 			position = 1
 	)
@@ -35,11 +35,20 @@ public interface MidiSyncConfig extends Config
 	{
 		return 100;
 	}
-
+	//	@ConfigItem(
+//			keyName = "quantize",
+//			name = "Ticks per Beat",
+//			description = "1 = 100 BPM (1 tick per beat), 2 = 50 BPM (2 ticks per beat)",
+//			section = "MidiSync"
+//	)
+//	default int quantize()
+//	{
+//		return 1;
+//	}
 	@ConfigItem(
 			keyName = "midiFolder",
 			name = "MIDI Folder",
-			description = "Folder containing OSRS (or other) MIDI files. Track must be in correct format (1-trackname.mid)",
+			description = "Folder containing OSRS MIDI files",
 			section = "MidiSync",
 			position = 3
 	)
@@ -49,20 +58,21 @@ public interface MidiSyncConfig extends Config
 	}
 	@ConfigItem(
 			keyName = "midiVolume",
-			name = "Midi Volume",
-			description = "Main volume. 0-100",
+			name = "midiVolume",
+			description = "midiVolume",
 			section = midisync_section,
 			position = 4
 	)
 	default int midiVolume() {
-		return 50;
+		return 100;
 	}
 
 	@ConfigItem(
 			keyName = "midiSoundfont",
 			name = "SoundFont File",
-			description = "Optional .sf2 SoundFont file for OSRS instruments. Not tested with other soundfonts",
-			section = midisync_section,
+			description = "Optional .sf2 SoundFont file for OSRS instruments",
+			section = midisync_section
+			,
 			position = 7
 	)
 	default String midiSoundfont() {
@@ -82,7 +92,7 @@ public interface MidiSyncConfig extends Config
 	@ConfigItem(
 			keyName = "shuffleTracks",
 			name = "Shuffle Tracks",
-			description = "If enabled, tracks will play in random order",
+			description = "If enabled, MIDI tracks will play in random order",
 			section = midisync_section,
 			position = 9
 	)
@@ -92,7 +102,7 @@ public interface MidiSyncConfig extends Config
 	@ConfigItem(
 			keyName = "nextTrack",
 			name = "Next Track",
-			description = "Manually skip to the next track. Only works once per tick for now",
+			description = "Manually skip to the next track",
 			section = midisync_section,
 			position = 10
 	)
@@ -104,7 +114,7 @@ public interface MidiSyncConfig extends Config
 	@ConfigItem(
 			keyName = "prevTrack",
 			name = "Previous Track",
-			description = "Manually skip to the previous track. Only works once per tick for now",
+			description = "Manually skip to the previous track",
 			section = midisync_section,
 			position = 11
 	)
@@ -112,20 +122,31 @@ public interface MidiSyncConfig extends Config
 	{
 		return false;
 	}
+//	@ConfigItem(
+//			keyName = "addCurrentTrackToWhitelist",
+//			name = "Add Current Track to Whitelist",
+//			description = "When enabled, the currently playing track will be added to the whitelist",
+//			section = midisync_section,
+//			position = 12
+//	)
+//	default boolean addCurrentTrackToWhitelist()
+//	{
+//		return false;
+//	}
 	// ======================
 	// Quantization (sub-tick support)
 	// ======================
 	@ConfigItem(
 			keyName = "quantizeDivisor",
 			name = "Quantization Divisor",
-			description = "Number of beats per tick (1 = full beat, 2 = half beat, 3 = third, ...). Try very low numbers for more obvious beats.",
+			description = "Number of beats per tick (1 = full beat, 2 = half beat, 3 = third, ...)",
 			section = midisync_section,
 			position = 2
 
 	)
 	@Range(min = 1, max = 256)
 	default int quantizeDivisor() {
-		return 64; // default = 64
+		return 1; // default = 1 (normal)
 	}
 
 	// ======================
@@ -134,10 +155,21 @@ public interface MidiSyncConfig extends Config
 	@ConfigItem(
 			keyName = "tickDurationMs",
 			name = "Game Tick Duration (ms)",
-			description = "DON'T MESS WITH THIS. Milliseconds per game tick (default 600 ms). Adjust if needed for timing.",
+			description = "Milliseconds per game tick (default 600 ms). Adjust if needed for timing.",
 			section = midisync_section
 	)
 	default int tickDurationMs() { return 600; }
+
+	@ConfigItem(
+			keyName = "useWhitelist",
+			name = "Use Whitelist",
+			description = "If enabled, only tracks in the whitelist are allowed (blacklist still applies).",
+			section = midisync_section
+	)
+	default boolean useWhitelist()
+	{
+		return false;
+	}
 
 	@ConfigItem(
 			keyName = "trackWhitelist",
@@ -166,24 +198,24 @@ public interface MidiSyncConfig extends Config
 			description = "Shows an overlay with track, tick, and timing info",
 			section = midisync_section
 	)
-	default boolean MidiSyncDevOverlay()
+	default boolean midisyncoverlay()
 	{
 		return false;
 	}
 	@ConfigItem(
 			keyName = "osrsOnly",
-			name = "EXPERIMENTAL: OSRS-Only Sounds",
-			description = "EXPERIMENTAL: If enabled, only OSRS-mapped instruments will play, blocking all others",
+			name = "OSRS-Only Sounds",
+			description = "If enabled, only OSRS-mapped instruments will play, blocking all others",
 			section = midisync_section
 	)
 	default boolean osrsOnly()
 	{
-		return false;
+		return false; // default to false so non-OSRS sounds are blocked by default
 	}
 	@ConfigSection(
 			name = "MIDI Volume Per Channel",
 			description = "Fine-grained volume control for each MIDI channel (0–15)",
-			position = 2,
+			position = 12,
 			closedByDefault = true
 	)
 	String midi_channel_volumes = "midiChannelVolumes";
@@ -265,7 +297,7 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 7 Volume",
 			description = "Adjust volume multiplier for MIDI channel 7",
 			section = midi_channel_volumes,
-			position = 6
+			position = 7
 	)
 	default int channel7Volume() { return 100; }
 
@@ -275,7 +307,7 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 8 Volume",
 			description = "Adjust volume multiplier for MIDI channel 8",
 			section = midi_channel_volumes,
-			position = 7
+			position = 8
 	)
 	default int channel8Volume() { return 100; }
 
@@ -285,7 +317,7 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 9 Volume",
 			description = "Adjust volume multiplier for MIDI channel 9 (percussion)",
 			section = midi_channel_volumes,
-			position = 8
+			position = 9
 	)
 	default int channel9Volume() { return 100; }
 
@@ -295,7 +327,7 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 10 Volume",
 			description = "Adjust volume multiplier for MIDI channel 10",
 			section = midi_channel_volumes,
-			position = 9
+			position = 10
 	)
 	default int channel10Volume() { return 100; }
 
@@ -305,7 +337,7 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 11 Volume",
 			description = "Adjust volume multiplier for MIDI channel 11",
 			section = midi_channel_volumes,
-			position = 10
+			position = 11
 	)
 	default int channel11Volume() { return 100; }
 
@@ -315,7 +347,7 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 12 Volume",
 			description = "Adjust volume multiplier for MIDI channel 12",
 			section = midi_channel_volumes,
-			position = 11
+			position = 12
 	)
 	default int channel12Volume() { return 100; }
 
@@ -325,7 +357,7 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 13 Volume",
 			description = "Adjust volume multiplier for MIDI channel 13",
 			section = midi_channel_volumes,
-			position = 12
+			position = 13
 	)
 	default int channel13Volume() { return 100; }
 
@@ -335,7 +367,7 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 14 Volume",
 			description = "Adjust volume multiplier for MIDI channel 14",
 			section = midi_channel_volumes,
-			position = 13
+			position = 14
 	)
 	default int channel14Volume() { return 100; }
 
@@ -345,7 +377,8 @@ public interface MidiSyncConfig extends Config
 			name = "Channel 15 Volume",
 			description = "Adjust volume multiplier for MIDI channel 15",
 			section = midi_channel_volumes,
-			position = 14
+			position = 15
 	)
 	default int channel15Volume() { return 100; }
+
 }
